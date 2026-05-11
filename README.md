@@ -91,8 +91,4 @@ This tool is intended for **authorized security testing and educational purposes
 
 ---
 
-## Author
 
-**Siddhant** - CSE Student | Aspiring Security Engineer
-
-[GitHub](https://github.com/siddhant1405)
