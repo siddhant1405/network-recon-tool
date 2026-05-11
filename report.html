@@ -1,0 +1,79 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Scan Report - 10.0.2.15</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0d0d0d; color: #e0e0e0; padding: 20px; }
+        h1 { color: #00ff99; }
+        h2 { color: #00ccff; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        h3 { color: #ffaa00; }
+        .port-box { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 15px; margin: 10px 0; }
+        .cve { background: #1f1f1f; border-left: 4px solid #ff4444; padding: 10px; margin: 8px 0; border-radius: 4px; }
+        .HIGH { border-left-color: #ff4444; }
+        .MEDIUM { border-left-color: #ffaa00; }
+        .LOW { border-left-color: #00ff99; }
+        .UNKNOWN { border-left-color: #888; }
+        .CRITICAL { border-left-color: #ff0000; }
+        .severity { font-weight: bold; font-size: 12px; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+        .badge-HIGH { background: #ff4444; color: white; }
+        .badge-MEDIUM { background: #ffaa00; color: black; }
+        .badge-LOW { background: #00ff99; color: black; }
+        .badge-CRITICAL { background: #ff0000; color: white; }
+        .badge-UNKNOWN { background: #888; color: white; }
+        .meta { color: #888; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Network Recon Report</h1>
+    <p class="meta">Target: 10.0.2.15 | Hosts Found: 1</p>
+    <hr>
+
+    
+    <h2>🖥️ Host: 10.0.2.15</h2>
+    <p class="meta">OS: Linux 2.6.32</p>
+
+        
+        <div class="port-box">
+            <h3>Port 22/tcp — OpenSSH 10.2p1 Debian 2</h3>
+            <p class="meta">Service: ssh</p>
+
+            
+                
+                <div class="cve HIGH">
+                    <span class="severity badge-HIGH">HIGH</span>
+                    <strong>CVE-1999-0661</strong>
+                    <p>A system is running a version of software that was replaced with a Trojan Horse at one of its distribution points, such as (1) TCP Wrappers 7.6, (2) util-linux 2.9g, (3) wuarchive ftpd (wuftpd) 2.2 an</p>
+                </div>
+                
+                <div class="cve HIGH">
+                    <span class="severity badge-HIGH">HIGH</span>
+                    <strong>CVE-2000-0525</strong>
+                    <p>OpenSSH does not properly drop privileges when the UseLogin option is enabled, which allows local users to execute arbitrary commands by providing the command to the ssh daemon.</p>
+                </div>
+                
+                <div class="cve MEDIUM">
+                    <span class="severity badge-MEDIUM">MEDIUM</span>
+                    <strong>CVE-2000-0535</strong>
+                    <p>OpenSSL 0.9.4 and OpenSSH for FreeBSD do not properly check for the existence of the /dev/random or /dev/urandom devices, which are absent on FreeBSD Alpha systems, which causes them to produce weak k</p>
+                </div>
+                
+                <div class="cve HIGH">
+                    <span class="severity badge-HIGH">HIGH</span>
+                    <strong>CVE-2000-1169</strong>
+                    <p>OpenSSH SSH client before 2.3.0 does not properly disable X11 or agent forwarding, which could allow a malicious SSH server to gain access to the X11 display and sniff X11 events, or gain access to th</p>
+                </div>
+                
+                <div class="cve HIGH">
+                    <span class="severity badge-HIGH">HIGH</span>
+                    <strong>CVE-2001-1459</strong>
+                    <p>OpenSSH 2.9 and earlier does not initiate a Pluggable Authentication Module (PAM) session if commands are executed with no pty, which allows local users to bypass resource limits (rlimits) set in pam.</p>
+                </div>
+                
+            
+        </div>
+        
+    
+
+</body>
+</html>
