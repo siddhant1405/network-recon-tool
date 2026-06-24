@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: recon_backend
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    #   - NET_RAW
+    #   - NET_ADMIN
+    
+  frontend:
+    build: ./frontend
+    container_name: recon_frontend
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    depends_on:
+      - backend
