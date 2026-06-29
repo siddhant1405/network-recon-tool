@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from scanner.utils import parse_targets
 from scanner.scanner import scan_targets
+from scanner.ai_summary import build_scan_summary, generate_risk_explanation
 import dataclasses
 import json
 
@@ -34,9 +35,16 @@ def run_scan(request: ScanRequest):
             raise HTTPException(status_code=400, detail="Invalid target format or unable to resolve.")
             
         results = scan_targets(targets, max_workers=10)
+        summary = build_scan_summary(results)
+        ai_explanation = generate_risk_explanation(summary)
         
         # Convert dataclasses to dicts for JSON serialization
-        return json.loads(json.dumps(results, cls=EnhancedJSONEncoder))
+        hosts = json.loads(json.dumps(results, cls=EnhancedJSONEncoder))
+        return {
+            "hosts": hosts,
+            "summary": summary,
+            "ai_explanation": ai_explanation,
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

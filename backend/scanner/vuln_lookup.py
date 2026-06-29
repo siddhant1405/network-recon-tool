@@ -2,8 +2,10 @@ import requests
 import time
 import os
 from typing import List
+from functools import lru_cache
 from .models import Vulnerability
 
+@lru_cache(maxsize=128)
 def get_cves(product: str, version: str) -> List[Vulnerability]:
     if not product and not version:
         return []

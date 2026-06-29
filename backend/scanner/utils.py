@@ -7,7 +7,21 @@ def parse_targets(target_input: str) -> List[str]:
     Parses the target string which can be a single IP, a CIDR block, or a file path.
     Returns a list of IP addresses as strings.
     """
+    if not target_input:
+        return []
+        
     hosts = []
+    
+    # Split by newlines or commas for multi-target strings
+    if '\n' in target_input or ',' in target_input:
+        lines = target_input.replace(',', '\n').split('\n')
+        for line in lines:
+            line = line.strip()
+            if line:
+                hosts.extend(parse_targets(line))
+        return list(set(hosts)) # remove duplicates
+
+    target_input = target_input.strip()
     
     # Check if it's a file
     if os.path.isfile(target_input):

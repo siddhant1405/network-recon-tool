@@ -11,7 +11,7 @@ def scan_single_host(ip: str) -> Host:
     print(f"[*] Scanning {ip}...")
     
     try:
-        scanner.scan(hosts=ip, arguments="-sV -O --open")
+        scanner.scan(hosts=ip, arguments="-sV -O -T4 --max-retries 1 --open")
     except Exception as e:
         print(f"[!] Scan failed for {ip}: {e}")
         return Host(ip=ip)
