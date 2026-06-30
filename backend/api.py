@@ -20,6 +20,7 @@ app.add_middleware(
 
 class ScanRequest(BaseModel):
     target: str
+    scan_mode: str = "fast"
 
 class EnhancedJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -34,7 +35,8 @@ def run_scan(request: ScanRequest):
         if not targets:
             raise HTTPException(status_code=400, detail="Invalid target format or unable to resolve.")
             
-        results = scan_targets(targets, max_workers=10)
+        scan_mode = request.scan_mode if request.scan_mode in {"fast", "deep"} else "fast"
+        results = scan_targets(targets, max_workers=10, scan_mode=scan_mode)
         summary = build_scan_summary(results)
         ai_explanation = generate_risk_explanation(summary)
         
@@ -44,6 +46,7 @@ def run_scan(request: ScanRequest):
             "hosts": hosts,
             "summary": summary,
             "ai_explanation": ai_explanation,
+            "scan_mode": scan_mode,
         }
         
     except Exception as e:

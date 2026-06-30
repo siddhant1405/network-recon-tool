@@ -8,6 +8,7 @@ import {
 
 function App() {
   const [target, setTarget] = useState('');
+  const [scanMode, setScanMode] = useState('fast');
   const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -18,6 +19,7 @@ function App() {
   }, [data]);
 
   const aiExplanation = data && !Array.isArray(data) ? data.ai_explanation : null;
+  const completedScanMode = data && !Array.isArray(data) ? data.scan_mode : scanMode;
 
   const handleScan = async (e) => {
     e.preventDefault();
@@ -28,7 +30,7 @@ function App() {
     setData(null);
 
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/scan', { target });
+      const response = await axios.post('http://127.0.0.1:8000/api/scan', { target, scan_mode: scanMode });
       setData(response.data);
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'An error occurred during scanning.');
@@ -127,6 +129,24 @@ function App() {
           style={{ resize: 'vertical', fontFamily: 'inherit' }}
         />
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', justifyContent: 'center' }}>
+          <div className="scan-mode-toggle" role="group" aria-label="Scan mode">
+            <button
+              type="button"
+              className={scanMode === 'fast' ? 'active' : ''}
+              onClick={() => setScanMode('fast')}
+              disabled={isLoading}
+            >
+              Fast
+            </button>
+            <button
+              type="button"
+              className={scanMode === 'deep' ? 'active' : ''}
+              onClick={() => setScanMode('deep')}
+              disabled={isLoading}
+            >
+              Deep
+            </button>
+          </div>
           <label className="upload-button" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', backgroundColor: 'var(--bg-surface-elevated)', border: '1px solid var(--border-color)', color: 'var(--text-primary)', padding: '0.5rem 1rem', borderRadius: '0.5rem', fontSize: '0.875rem' }}>
             <span>Upload File</span>
             <input type="file" accept=".txt,.csv" onChange={handleFileUpload} style={{ display: 'none' }} disabled={isLoading} />
@@ -169,8 +189,12 @@ function App() {
       {isLoading && (
         <div className="loading">
           <Activity size={48} className="spinner" />
-          <h2>Scanning target infrastructure...</h2>
-          <p>This might take a while depending on the target scope and NIST API rate limits.</p>
+          <h2>{scanMode === 'deep' ? 'Running deep scan...' : 'Running fast scan...'}</h2>
+          <p>
+            {scanMode === 'deep'
+              ? 'Deep mode checks versions, fingerprints, and CVE matches, so it can take longer.'
+              : 'Fast mode checks reachable ports first and skips slower external vulnerability lookups.'}
+          </p>
         </div>
       )}
 
@@ -180,9 +204,14 @@ function App() {
             <div className="risk-explainer-header">
               <ShieldAlert size={24} color="var(--text-primary)" />
               <div>
-                <span className="summary-label">System Status</span>
+                <span className="summary-label">AI Summary</span>
                 <h3>{aiExplanation?.status_label || (stats.criticalVulns > 0 ? 'Review Needed' : 'Normal')}</h3>
               </div>
+            </div>
+            <div className="scan-mode-note">
+              {completedScanMode === 'deep'
+                ? 'Deep scan: service versions, fingerprints, and CVE matches were checked.'
+                : 'Fast scan: open ports were checked. Use Deep mode when you want slower CVE and fingerprint checks.'}
             </div>
             <p className="risk-headline">
               {aiExplanation?.headline || (stats.totalVulns > 0
@@ -297,8 +326,14 @@ function App() {
                       <div key={j} className="port-item">
                         <div className="port-header">
                           <span>Port {port.port}/{port.protocol.toUpperCase()}</span>
-                          <span className="port-service">{port.product} {port.version}</span>
+                          <span className="port-service">{port.product || port.service} {port.version}</span>
                         </div>
+
+                        {port.summary && (
+                          <div className="finding-summary">
+                            <strong>What this means:</strong> {port.summary}
+                          </div>
+                        )}
 
                         {port.fingerprint && (Object.keys(port.fingerprint.raw_headers || {}).length > 0 || port.fingerprint.ssl_issuer) && (
                           <div className="fingerprint-data">
@@ -315,7 +350,14 @@ function App() {
                             {port.cves.map((cve, k) => (
                               <div key={k} className={`cve-item ${cve.severity.toLowerCase()}`}>
                                 <div className="cve-id">{cve.id}</div>
-                                <div className="cve-desc">{cve.description}</div>
+                                <div className="cve-body">
+                                  <div className="cve-desc">{cve.description}</div>
+                                  {cve.summary && (
+                                    <div className="finding-summary cve-summary">
+                                      <strong>What this means:</strong> {cve.summary}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>

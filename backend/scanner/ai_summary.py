@@ -84,6 +84,7 @@ def fallback_explanation(summary: Dict[str, Any], reason: str = "fallback") -> D
     total_cves = summary.get("known_cve_matches", 0)
     critical_findings = summary.get("critical_findings", 0)
     high_findings = summary.get("high_findings", 0)
+    open_ports = summary.get("open_port_count", 0)
 
     if critical_findings:
         headline = "Critical issues need review."
@@ -117,6 +118,17 @@ def fallback_explanation(summary: Dict[str, Any], reason: str = "fallback") -> D
             "No urgent action is required right now.",
             "Keep your software updated.",
             "Review exposed services if this device is reachable from untrusted networks.",
+        ]
+    elif open_ports:
+        headline = "Open services were found, with no CVE matches in this scan."
+        explanation = (
+            "The scan found services accepting network connections. That is not automatically bad, "
+            "but each open port should be expected and limited to trusted networks when possible."
+        )
+        actions = [
+            "Confirm each open port is needed.",
+            "Disable services you do not use.",
+            "Use Deep mode if you want slower version and CVE matching.",
         ]
     else:
         headline = "Your system looks normal."

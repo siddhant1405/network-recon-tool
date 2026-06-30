@@ -7,6 +7,7 @@ class Vulnerability:
     severity: str
     description: str
     cvss: float = 0.0
+    summary: str = ""
 
 @dataclass
 class ServiceFingerprint:
@@ -27,6 +28,7 @@ class Port:
     product: str = ""
     cves: List[Vulnerability] = field(default_factory=list)
     fingerprint: Optional[ServiceFingerprint] = None
+    summary: str = ""
 
 @dataclass
 class Host:

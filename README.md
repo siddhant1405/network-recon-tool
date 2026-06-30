@@ -1,106 +1,160 @@
 # Network Recon & Vulnerability Assessment Tool
 
-An automated network reconnaissance tool that mimics real-world pentest Phase 1 workflows - scanning hosts, detecting services, querying CVEs, and generating a professional HTML report.
+A Dockerized network reconnaissance dashboard for authorized security testing. It scans targets, shows exposed services, optionally checks CVE matches, and explains findings in plain language.
 
----
+## Features
+
+- Fast web-based scanning from a React dashboard
+- Fast and Deep scan modes
+- Open-port inventory with "What this means" summaries
+- Optional CVE matching against NIST NVD data
+- Optional Groq-powered AI summary with a built-in fallback
+- Risk scoring by host
+- Charts for severity distribution and host risk
+- File upload for target lists
+
+## Scan Modes
+
+### Fast
+
+Fast mode is the default. It is designed for day-to-day checks when you want results quickly.
+
+Fast mode:
+
+- Checks common reachable ports
+- Skips slower OS detection
+- Skips external CVE API calls
+- Skips HTTP/TLS fingerprinting
+- Adds a plain-language summary for every detected open port
+
+Use Fast mode first when scanning your own machine or a small local network.
+
+### Deep
+
+Deep mode keeps the heavier checks for detailed review.
+
+Deep mode:
+
+- Runs service and version detection
+- Attempts OS detection
+- Performs HTTP/TLS fingerprinting where relevant
+- Looks up possible CVE matches from NVD
+- Adds summaries below each CVE explaining what the match means
+
+Deep mode can take much longer because Nmap service detection, OS detection, fingerprinting, and NVD rate limits all add time.
+
+## AI Summary
+
+The dashboard shows an AI Summary at the top of the results.
+
+If `GROQ_API_KEY` is configured, the app sends only a sanitized scan summary to Groq. The request includes counts, severity totals, risk labels, and service names. It does not send IP addresses, hostnames, raw banners, or full CVE descriptions.
+
+If `GROQ_API_KEY` is not configured or the API call fails, the app uses a local fallback explanation.
 
 ## Tech Stack
 
-- **Python 3** - Core scripting
-- **Nmap** - Port scanning, service & OS detection
-- **python-nmap** - Nmap Python wrapper
-- **NVD API (NIST)** - CVE lookup against detected services
-- **Groq API (optional)** - User-friendly risk explanations with a non-AI fallback
-- **Jinja2** - HTML report templating
-- **Kali Linux** - Development & testing environment
+- React + Vite frontend
+- FastAPI backend
+- Nmap via `python-nmap`
+- NIST NVD API for CVE matching in Deep mode
+- Groq API for optional AI explanations
+- Docker Compose for local deployment
 
----
+## Run With Docker
 
-## How It Works
-
-```
-Target IP
-    ↓
-Nmap Scan (ports, services, OS detection)
-    ↓
-NVD API CVE Lookup (per detected service)
-    ↓
-Sanitized Risk Summary + Optional Groq Explanation
-    ↓
-HTML Report Generation
-```
-
-1. **scanner.py** - Runs Nmap programmatically, extracts open ports, services, versions, and OS
-2. **vuln_lookup.py** - Queries NIST NVD API for known CVEs against each detected service
-3. **ai_summary.py** - Builds a privacy-safe summary and optionally asks Groq for user-friendly wording
-4. **report.py** - Renders all findings into a clean, color-coded HTML report
-
----
-
-## Sample Output
-
-| Port | Service | CVE | Severity |
-|------|---------|-----|----------|
-| 22/tcp | OpenSSH 10.2p1 | CVE-2000-0525 | HIGH |
-| 22/tcp | OpenSSH 10.2p1 | CVE-2001-1459 | HIGH |
-
-Generated HTML report with dark theme, color-coded severity badges (CRITICAL / HIGH / MEDIUM / LOW).
-
----
-
-## Setup & Usage
-
-**Requirements:**
-- Kali Linux (Nmap pre-installed)
-- Python 3.x
-
-**Install dependencies:**
 ```bash
 git clone https://github.com/siddhant1405/network-recon-tool.git
 cd network-recon-tool
-python3 -m venv venv
-source venv/bin/activate
-pip install python-nmap jinja2 requests
+cp backend/.env.example backend/.env
+docker compose up -d --build
 ```
 
-**Run:**
+Open the dashboard:
+
+```text
+http://localhost/
+```
+
+Backend API:
+
+```text
+http://localhost:8000/
+```
+
+Stop the app:
+
 ```bash
-sudo venv/bin/python3 scanner.py
+docker compose down
 ```
 
-**Optional AI explanation:**
+## Optional Environment Variables
+
+Create `backend/.env` from the example file:
+
 ```bash
 cp backend/.env.example backend/.env
-# Add GROQ_API_KEY in backend/.env to enable Groq summaries.
-# Without GROQ_API_KEY, the app uses the built-in non-AI fallback.
 ```
 
-The Groq request only receives summarized scan facts such as counts, risk labels, severity totals, and service names. It does not receive IPs, hostnames, raw banners, or full CVE descriptions.
+Supported variables:
 
-**Enter target IP when prompted. Report saved as `report.html`.**
-
-**Open report:**
 ```bash
-xdg-open report.html
+GROQ_API_KEY=your_groq_key
+GROQ_MODEL=llama-3.3-70b-versatile
+NVD_API_KEY=your_nvd_key
 ```
 
----
+`NVD_API_KEY` is optional, but it improves NVD rate limits when using Deep mode.
+
+## API Usage
+
+Run a fast scan:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/scan \
+  -H "Content-Type: application/json" \
+  -d '{"target":"127.0.0.1","scan_mode":"fast"}'
+```
+
+Run a deep scan:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/scan \
+  -H "Content-Type: application/json" \
+  -d '{"target":"127.0.0.1","scan_mode":"deep"}'
+```
+
+Targets can be a single IP, hostname, CIDR range, or multiple targets separated by newlines or commas.
 
 ## Project Structure
 
-```
+```text
 network-recon-tool/
-├── scanner.py          # Nmap wrapper + main pipeline
-├── vuln_lookup.py      # NVD API CVE lookup
-├── report.py           # Jinja2 HTML report generator
+├── backend/
+│   ├── api.py
+│   ├── scanner/
+│   │   ├── ai_summary.py
+│   │   ├── fingerprint.py
+│   │   ├── models.py
+│   │   ├── risk_engine.py
+│   │   ├── scanner.py
+│   │   └── vuln_lookup.py
+│   └── Dockerfile
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   └── index.css
+│   └── Dockerfile
+├── docker-compose.yml
 └── README.md
 ```
 
----
+## Notes
+
+- Fast mode is intentionally lighter so scans do not feel slow on a healthy local machine.
+- CVE matches are possible matches based on detected service metadata. They are not proof that a host is exploitable.
+- Deep mode may be slower when many services are discovered, especially without an `NVD_API_KEY`.
+- Only scan systems and networks you own or have explicit permission to test.
 
 ## Disclaimer
 
-This tool is intended for **authorized security testing and educational purposes only**. Only scan networks and systems you have explicit permission to test. Unauthorized scanning is illegal.
-
----
-
+This tool is intended for authorized security testing and educational purposes only. Unauthorized scanning may be illegal.
