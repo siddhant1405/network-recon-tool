@@ -164,6 +164,42 @@ network-recon-tool/
 - Deep mode may be slower when many services are discovered, especially without an `NVD_API_KEY`.
 - Only scan systems and networks you own or have explicit permission to test.
 
+## Known Limitations
+
+### CVE matching uses keyword search, not structured CPE lookup
+
+The tool queries the NVD API with `keywordSearch`, which performs text matching against CVE descriptions and references. This is not a structured lookup against the CPE dictionary. As a result:
+
+- **False negatives** — A real CVE may be missed if its description does not share vocabulary with the keyword query (e.g. the CVE uses a vendor-specific product name that differs from what Nmap reports).
+- **False positives** — A CVE may be returned because the keyword appears in an unrelated part of its description. The `_classify_match` function mitigates this by requiring a CPE configuration match after the keyword search, but the initial candidate set is still text-driven.
+
+A more robust approach would use the NVD CPE Match API to do structured product-version lookups, but this is significantly more complex and was out of scope for this project.
+
+### Product name matching is guarded but not exact
+
+Detected product names from Nmap are matched against CPE vendor/product strings using normalized substring matching with two guards:
+
+- The shorter string must be at least **4 characters**.
+- The shorter string must be at least **60%** of the longer string's length.
+
+This prevents obvious false positives like `"php"` matching `"phpmyadmin"`, but edge cases remain for products with similar names. Each CVE match includes a **confidence label** (`confirmed` or `speculative`) so users can triage accordingly.
+
+### CVE age cutoff
+
+CVEs are filtered by publication date to reduce noise from outdated findings:
+
+| Age | Confirmed match | Speculative match |
+|---|---|---|
+| < 1 year | Kept | Kept |
+| 1–3 years | Kept | Dropped |
+| > 3 years | Dropped | Dropped |
+
+This means the tool intentionally does not surface very old speculative matches, even if they are technically still valid.
+
+### In-memory caching is per-process
+
+NVD API responses are cached using Python's `@lru_cache`, which is per-process memory. This works correctly with a single uvicorn worker (the default in the Docker setup), but would result in duplicate API calls and wasted memory with multiple workers. A shared cache (e.g. Redis) would be needed for multi-worker deployments.
+
 ## Disclaimer
 
 This tool is intended for authorized security testing and educational purposes only. Unauthorized scanning may be illegal.

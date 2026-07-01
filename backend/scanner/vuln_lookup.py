@@ -52,7 +52,18 @@ def _product_matches(product: str, vendor: str, cpe_product: str) -> bool:
         return False
 
     candidates = [value for value in (vendor_norm, cpe_product_norm) if value]
-    return any(value in product_norm or product_norm in value for value in candidates)
+    for value in candidates:
+        # Exact match always counts.
+        if value == product_norm:
+            return True
+        # Substring match with guards: the shorter string must be at least
+        # 4 characters AND at least 60 % of the longer string's length.
+        # This prevents false positives like "php" matching "phpmyadmin"
+        # or "ssh" matching "opensshserver".
+        shorter, longer = (value, product_norm) if len(value) <= len(product_norm) else (product_norm, value)
+        if len(shorter) >= 4 and len(shorter) / len(longer) >= 0.6 and shorter in longer:
+            return True
+    return False
 
 
 def _description_text(cve: dict) -> str:
@@ -84,10 +95,10 @@ def _is_recent_enough(cve: dict, match_info: dict | None) -> bool:
     age_days = (now - published).days
     confidence = (match_info or {}).get("confidence")
 
+    # Hard cap: always drop CVEs older than 3 years.
     if age_days > 365 * 3:
         return False
-    if age_days > 365 * 2 and confidence != "confirmed":
-        return False
+    # Speculative matches older than 1 year are too noisy to keep.
     if age_days > 365 and confidence != "confirmed":
         return False
     return True
@@ -205,6 +216,9 @@ def _classify_match(cve: dict, product: str, detected_version: str) -> dict | No
     return None
 
 
+# NOTE: lru_cache is per-process memory. This is fine for a single uvicorn
+# worker but would cause duplicate NVD calls and wasted memory with multiple
+# workers. For multi-worker deployments, swap to a shared cache (e.g. Redis).
 @lru_cache(maxsize=128)
 def get_cves(product: str, version: str) -> List[Vulnerability]:
     product = (product or "").strip()
