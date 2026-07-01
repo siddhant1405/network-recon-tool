@@ -12,7 +12,11 @@ A Dockerized network reconnaissance dashboard for authorized security testing. I
 - Risk scoring by host
 - Charts for severity distribution and host risk
 - File upload for target lists
-- Report generation and sharing (CSV export, printable PDF, clipboard share)
+- Report generation and export:
+  - **PDF** — structured report with executive summary, AI analysis, per-host port tables, and CVE details
+  - **Excel** — multi-sheet workbook (Summary, Hosts, Ports, CVEs) with all scan data
+  - **CSV** — flat export of all host, port, and CVE data
+  - **Share** — copies a text summary to clipboard or uses the Web Share API
 
 ## Scan Modes
 
@@ -59,6 +63,8 @@ If `GROQ_API_KEY` is not configured or the API call fails, the app uses a local 
 - Nmap via `python-nmap`
 - NIST NVD API for CVE matching in Deep mode
 - Groq API for optional AI explanations
+- jsPDF for PDF report generation
+- SheetJS (xlsx) for Excel export
 - Docker Compose for local deployment
 
 ## Run With Docker

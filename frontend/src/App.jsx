@@ -1,10 +1,12 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Activity, ShieldAlert, Server, ActivitySquare } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
   PieChart, Pie, LineChart, Line, CartesianGrid
 } from 'recharts';
+import { jsPDF } from 'jspdf';
+import * as XLSX from 'xlsx';
 
 const severityRank = {
   CRITICAL: 4,
@@ -30,6 +32,8 @@ function App() {
   const [confidenceFilter, setConfidenceFilter] = useState('all');
   const [sortBy, setSortBy] = useState('risk');
   const [scanHistory, setScanHistory] = useState([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const dashboardRef = useRef(null);
 
   const hosts = useMemo(() => {
     if (!data) return [];
@@ -175,22 +179,289 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleExportPdf = () => {
-    const reportWindow = window.open('', '_blank', 'width=900,height=700');
-    if (!reportWindow) return;
+  const handleExportPdf = async () => {
+    setIsExporting(true);
+    try {
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - margin * 2;
+      let yPos = margin;
 
-    const rows = filteredHosts.map(host => {
-      const portRows = host.ports.map(port => {
-        const cveList = (port.cves || []).map(cve => `- ${cve.id} (${cve.severity || 'UNKNOWN'} / ${cve.confidence || 'unknown'})`).join('<br/>');
-        return `<li><strong>Port ${port.port}/${port.protocol.toUpperCase()}</strong> — ${port.product || port.service} ${port.version || ''}<br/>${cveList || 'No CVEs matched'}</li>`;
-      }).join('');
-      return `<section><h3>${host.ip}</h3><ul>${portRows}</ul></section>`;
-    }).join('');
+      // Helper: add text with auto-page-break
+      const addText = (text, size = 10, style = 'normal', color = [220, 220, 220]) => {
+        pdf.setFontSize(size);
+        pdf.setFont('helvetica', style);
+        pdf.setTextColor(...color);
+        const lines = pdf.splitTextToSize(text, contentWidth);
+        lines.forEach(line => {
+          if (yPos > pageHeight - margin) {
+            pdf.addPage();
+            yPos = margin;
+          }
+          pdf.text(line, margin, yPos);
+          yPos += size * 0.45;
+        });
+        yPos += 2;
+      };
 
-    reportWindow.document.write(`<!doctype html><html><head><title>Network Recon Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1,h2,h3{color:#0f172a}ul{padding-left:18px}li{margin-bottom:8px}</style></head><body><h1>Network Recon Report</h1><p>Generated ${new Date().toLocaleString()}</p>${rows}</body></html>`);
-    reportWindow.document.close();
-    reportWindow.focus();
-    reportWindow.print();
+      // Helper: draw a table
+      const addTable = (headers, rows, colWidths) => {
+        const rowHeight = 6;
+        const fontSize = 7;
+        pdf.setFontSize(fontSize);
+
+        // Header
+        if (yPos > pageHeight - margin - rowHeight * 2) {
+          pdf.addPage();
+          yPos = margin;
+        }
+        pdf.setFillColor(0, 40, 0);
+        pdf.rect(margin, yPos - 4, contentWidth, rowHeight, 'F');
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(0, 255, 0);
+        let xPos = margin + 1;
+        headers.forEach((h, i) => {
+          pdf.text(String(h), xPos, yPos);
+          xPos += colWidths[i];
+        });
+        yPos += rowHeight;
+
+        // Rows
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(200, 200, 200);
+        rows.forEach((row, rowIdx) => {
+          if (yPos > pageHeight - margin) {
+            pdf.addPage();
+            yPos = margin;
+          }
+          if (rowIdx % 2 === 0) {
+            pdf.setFillColor(15, 15, 15);
+          } else {
+            pdf.setFillColor(25, 25, 25);
+          }
+          pdf.rect(margin, yPos - 4, contentWidth, rowHeight, 'F');
+          xPos = margin + 1;
+          row.forEach((cell, i) => {
+            const cellText = String(cell ?? '').substring(0, Math.floor(colWidths[i] / 1.8));
+            pdf.text(cellText, xPos, yPos);
+            xPos += colWidths[i];
+          });
+          yPos += rowHeight;
+        });
+        yPos += 4;
+      };
+
+      // Background for data pages
+      const addPageBg = () => {
+        pdf.setFillColor(10, 10, 10);
+        pdf.rect(0, 0, pageWidth, pageHeight, 'F');
+      };
+      addPageBg();
+
+      // Override addPage to auto-add background
+      const origAddPage = pdf.addPage.bind(pdf);
+      pdf.addPage = (...args) => {
+        origAddPage(...args);
+        addPageBg();
+      };
+
+      // Title
+      addText('NETWORK RECONNAISSANCE REPORT', 18, 'bold', [0, 255, 0]);
+      yPos += 2;
+      addText(`Generated: ${new Date().toLocaleString()}`, 10, 'normal', [100, 200, 100]);
+      addText(`Scan Mode: ${(completedScanMode || scanMode).toUpperCase()}`, 10, 'normal', [100, 200, 100]);
+      addText(`Target: ${target}`, 10, 'normal', [100, 200, 100]);
+      yPos += 4;
+
+      // Executive Summary
+      addText('EXECUTIVE SUMMARY', 14, 'bold', [0, 255, 0]);
+      pdf.setDrawColor(0, 255, 0);
+      pdf.line(margin, yPos - 1, margin + contentWidth, yPos - 1);
+      yPos += 3;
+
+      addText(`Total Hosts Scanned: ${hosts.length}`, 10, 'normal', [200, 200, 200]);
+      addText(`Total CVE Matches: ${stats?.totalVulns || 0}`, 10, 'normal', [200, 200, 200]);
+      addText(`Critical Findings: ${stats?.criticalVulns || 0}`, 10, 'bold', stats?.criticalVulns > 0 ? [255, 80, 80] : [200, 200, 200]);
+      addText(`High Findings: ${stats?.highVulns || 0}`, 10, 'normal', stats?.highVulns > 0 ? [255, 150, 50] : [200, 200, 200]);
+      addText(`Highest Risk Host: ${stats?.highestRiskHost || 'None'}`, 10, 'normal', [200, 200, 200]);
+      yPos += 2;
+
+      // AI Summary
+      if (aiExplanation) {
+        addText('AI ANALYSIS', 14, 'bold', [0, 255, 0]);
+        pdf.setDrawColor(0, 255, 0);
+        pdf.line(margin, yPos - 1, margin + contentWidth, yPos - 1);
+        yPos += 3;
+        addText(`Status: ${aiExplanation.status_label || 'Normal'}`, 11, 'bold', [0, 255, 0]);
+        if (aiExplanation.headline) addText(aiExplanation.headline, 10, 'bold', [220, 220, 220]);
+        if (aiExplanation.explanation) addText(aiExplanation.explanation, 9, 'normal', [180, 180, 180]);
+        if (aiExplanation.recommended_actions?.length > 0) {
+          addText('Recommended Actions:', 10, 'bold', [0, 220, 0]);
+          aiExplanation.recommended_actions.forEach((action, i) => {
+            addText(`  ${i + 1}. ${action}`, 9, 'normal', [180, 180, 180]);
+          });
+        }
+        yPos += 4;
+      }
+
+      // Host Details
+      filteredHosts.forEach(host => {
+        addText(`HOST: ${host.ip}`, 13, 'bold', [0, 255, 0]);
+        pdf.setDrawColor(0, 180, 0);
+        pdf.line(margin, yPos - 1, margin + contentWidth, yPos - 1);
+        yPos += 3;
+        addText(`OS: ${host.os || 'Unknown'}  |  Risk Score: ${host.risk_score ?? 'N/A'} (${host.risk_label || 'Unknown'})  |  Open Ports: ${host.ports.length}`, 10, 'normal', [180, 180, 180]);
+        yPos += 2;
+
+        // Port table for this host
+        const portHeaders = ['Port', 'Protocol', 'Service', 'Product', 'Version', 'CVEs'];
+        const portColWidths = [18, 18, 30, 35, 35, contentWidth - 136];
+        const portRows = host.ports.map(port => [
+          port.port,
+          (port.protocol || '').toUpperCase(),
+          port.service || '',
+          port.product || '',
+          port.version || '',
+          (port.cves || []).length
+        ]);
+        if (portRows.length > 0) {
+          addText('Open Ports:', 10, 'bold', [0, 200, 0]);
+          addTable(portHeaders, portRows, portColWidths);
+        }
+
+        // CVE details for this host
+        const allCves = host.ports.flatMap(port =>
+          (port.cves || []).map(cve => ({
+            port: port.port,
+            service: port.service || port.product || '',
+            ...cve
+          }))
+        );
+        if (allCves.length > 0) {
+          addText('CVE Matches:', 10, 'bold', [0, 200, 0]);
+          const cveHeaders = ['CVE ID', 'Port', 'Severity', 'CVSS', 'Confidence', 'Affected Versions'];
+          const cveColWidths = [32, 16, 22, 16, 24, contentWidth - 110];
+          const cveRows = allCves.map(cve => [
+            cve.id,
+            cve.port,
+            (cve.severity || 'UNKNOWN').toUpperCase(),
+            cve.cvss ?? '',
+            cve.confidence || 'unknown',
+            cve.affected_versions || ''
+          ]);
+          addTable(cveHeaders, cveRows, cveColWidths);
+
+          // CVE descriptions
+          allCves.forEach(cve => {
+            if (cve.description || cve.summary) {
+              const sevColor = (cve.severity || '').toUpperCase() === 'CRITICAL' ? [255, 80, 80]
+                : (cve.severity || '').toUpperCase() === 'HIGH' ? [255, 150, 50]
+                  : [200, 200, 200];
+              addText(`${cve.id} (${(cve.severity || 'UNKNOWN').toUpperCase()})`, 9, 'bold', sevColor);
+              if (cve.description) addText(`  ${cve.description}`, 8, 'normal', [160, 160, 160]);
+              if (cve.summary) addText(`  Impact: ${cve.summary}`, 8, 'italic', [140, 140, 140]);
+            }
+          });
+        }
+        yPos += 4;
+      });
+
+      // Save
+      pdf.save(`network-recon-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      console.error('PDF export failed', err);
+      window.alert('PDF export failed. Check console for details.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Summary
+    const summaryData = [
+      ['Network Recon Report'],
+      ['Generated', new Date().toLocaleString()],
+      ['Scan Mode', (completedScanMode || scanMode).toUpperCase()],
+      ['Target', target],
+      [],
+      ['Total Hosts', hosts.length],
+      ['Total CVE Matches', stats?.totalVulns || 0],
+      ['Critical Findings', stats?.criticalVulns || 0],
+      ['High Findings', stats?.highVulns || 0],
+      ['Highest Risk Host', stats?.highestRiskHost || 'None'],
+    ];
+    if (aiExplanation) {
+      summaryData.push([], ['AI Status', aiExplanation.status_label || '']);
+      if (aiExplanation.headline) summaryData.push(['AI Headline', aiExplanation.headline]);
+      if (aiExplanation.explanation) summaryData.push(['AI Explanation', aiExplanation.explanation]);
+      if (aiExplanation.recommended_actions?.length > 0) {
+        summaryData.push([], ['Recommended Actions']);
+        aiExplanation.recommended_actions.forEach((a, i) => summaryData.push([`  ${i + 1}`, a]));
+      }
+    }
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+    summarySheet['!cols'] = [{ wch: 22 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
+
+    // Sheet 2: Hosts
+    const hostsData = [
+      ['IP', 'OS', 'Risk Score', 'Risk Label', 'Open Ports', 'CVE Count']
+    ];
+    filteredHosts.forEach(host => {
+      const cveCount = host.ports.reduce((sum, p) => sum + (p.cves || []).length, 0);
+      hostsData.push([host.ip, host.os || '', host.risk_score ?? '', host.risk_label || '', host.ports.length, cveCount]);
+    });
+    const hostsSheet = XLSX.utils.aoa_to_sheet(hostsData);
+    hostsSheet['!cols'] = [{ wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, hostsSheet, 'Hosts');
+
+    // Sheet 3: Ports
+    const portsData = [
+      ['Host', 'Port', 'Protocol', 'Service', 'Product', 'Version', 'CVE Count', 'Summary']
+    ];
+    filteredHosts.forEach(host => {
+      host.ports.forEach(port => {
+        portsData.push([
+          host.ip, port.port, (port.protocol || '').toUpperCase(),
+          port.service || '', port.product || '', port.version || '',
+          (port.cves || []).length, port.summary || ''
+        ]);
+      });
+    });
+    const portsSheet = XLSX.utils.aoa_to_sheet(portsData);
+    portsSheet['!cols'] = [{ wch: 18 }, { wch: 8 }, { wch: 10 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 50 }];
+    XLSX.utils.book_append_sheet(wb, portsSheet, 'Ports');
+
+    // Sheet 4: CVEs
+    const cvesData = [
+      ['Host', 'Port', 'Service', 'CVE ID', 'Severity', 'CVSS', 'Confidence',
+        'Match Basis', 'Detected Version', 'Affected Versions', 'Description', 'Summary', 'Noise Reason']
+    ];
+    filteredHosts.forEach(host => {
+      host.ports.forEach(port => {
+        (port.cves || []).forEach(cve => {
+          cvesData.push([
+            host.ip, port.port, port.service || port.product || '',
+            cve.id, (cve.severity || 'UNKNOWN').toUpperCase(), cve.cvss ?? '',
+            cve.confidence || 'unknown', cve.match_basis || '',
+            cve.detected_version || '', cve.affected_versions || '',
+            cve.description || '', cve.summary || '', cve.noise_reason || ''
+          ]);
+        });
+      });
+    });
+    const cvesSheet = XLSX.utils.aoa_to_sheet(cvesData);
+    cvesSheet['!cols'] = [
+      { wch: 18 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 10 }, { wch: 8 },
+      { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 50 }, { wch: 40 }, { wch: 30 }
+    ];
+    XLSX.utils.book_append_sheet(wb, cvesSheet, 'CVEs');
+
+    XLSX.writeFile(wb, `network-recon-report-${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const handleShareReport = async () => {
@@ -510,7 +781,28 @@ function App() {
       )}
 
       {data && stats && (
-        <div className="dashboard">
+        <div className="dashboard" ref={dashboardRef}>
+          <div className="report-card report-card-prominent">
+            <div className="report-card-header">
+              <span className="report-card-icon">📄</span>
+              <div className="report-card-title">Generate / Share Report</div>
+            </div>
+            <div className="report-tools">
+              <button type="button" className="export-button" onClick={handleExportCsv}>
+                ⬇ Export CSV
+              </button>
+              <button type="button" className="export-button" onClick={handleExportExcel}>
+                📊 Export Excel
+              </button>
+              <button type="button" className="export-button" onClick={handleExportPdf} disabled={isExporting}>
+                {isExporting ? '⏳ Generating...' : '🖨 Export PDF'}
+              </button>
+              <button type="button" className="export-button" onClick={handleShareReport}>
+                🔗 Share Report
+              </button>
+            </div>
+            <div className="report-hint">Export or share the current scan report. CSV includes all host, port, and CVE data. Excel provides multi-sheet workbook with hosts, ports, and CVEs. PDF captures a full page screenshot with detailed data tables. Share copies a text summary to your clipboard.</div>
+          </div>
           <div className="risk-explainer">
             <div className="risk-explainer-header">
               <ShieldAlert size={24} color="var(--text-primary)" />
@@ -663,24 +955,6 @@ function App() {
             </div>
           </div>
 
-          <div className="report-card report-card-prominent">
-            <div className="report-card-header">
-              <span className="report-card-icon">📄</span>
-              <div className="report-card-title">Generate / Share Report</div>
-            </div>
-            <div className="report-tools">
-              <button type="button" className="export-button" onClick={handleExportCsv}>
-                ⬇ Export CSV
-              </button>
-              <button type="button" className="export-button" onClick={handleExportPdf}>
-                🖨 Export PDF
-              </button>
-              <button type="button" className="export-button" onClick={handleShareReport}>
-                🔗 Share Report
-              </button>
-            </div>
-            <div className="report-hint">Export or share the current scan report. CSV includes all host, port, and CVE data. PDF opens a printable summary. Share copies a text summary to your clipboard.</div>
-          </div>
 
           <div className="assets-list">
             <div className="inventory-toolbar">
