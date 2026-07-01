@@ -51,18 +51,27 @@ def _product_matches(product: str, vendor: str, cpe_product: str) -> bool:
     if not product_norm:
         return False
 
+    # Alias dictionary for common Nmap-to-CPE mismatches
+    aliases = {
+        "httpd": ["apache", "httpserver"],
+        "sshd": ["openssh"],
+    }
+    
+    allowed_products = {product_norm}
+    if product_norm in aliases:
+        allowed_products.update(aliases[product_norm])
+
     candidates = [value for value in (vendor_norm, cpe_product_norm) if value]
     for value in candidates:
-        # Exact match always counts.
-        if value == product_norm:
-            return True
-        # Substring match with guards: the shorter string must be at least
-        # 4 characters AND at least 60 % of the longer string's length.
-        # This prevents false positives like "php" matching "phpmyadmin"
-        # or "ssh" matching "opensshserver".
-        shorter, longer = (value, product_norm) if len(value) <= len(product_norm) else (product_norm, value)
-        if len(shorter) >= 4 and len(shorter) / len(longer) >= 0.6 and shorter in longer:
-            return True
+        for allowed in allowed_products:
+            # Exact match always counts.
+            if value == allowed:
+                return True
+            # Substring match with guards: the shorter string must be at least
+            # 4 characters AND at least 60 % of the longer string's length.
+            shorter, longer = (value, allowed) if len(value) <= len(allowed) else (allowed, value)
+            if len(shorter) >= 4 and len(shorter) / len(longer) >= 0.6 and shorter in longer:
+                return True
     return False
 
 
@@ -78,7 +87,10 @@ def _parse_cve_date(value: str) -> datetime | None:
         return None
     try:
         cleaned = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(cleaned)
+        dt = datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
         return None
 
@@ -95,12 +107,12 @@ def _is_recent_enough(cve: dict, match_info: dict | None) -> bool:
     age_days = (now - published).days
     confidence = (match_info or {}).get("confidence")
 
-    # Hard cap: always drop CVEs older than 3 years.
-    if age_days > 365 * 3:
-        return False
-    # Speculative matches older than 1 year are too noisy to keep.
-    if age_days > 365 and confidence != "confirmed":
-        return False
+    # Only drop speculative (imprecise) matches that are older than 1 year.
+    # Confirmed exact product/version matches never expire, as old vulnerable
+    # software is still vulnerable if it is running today.
+    if confidence != "confirmed":
+        if age_days > 365:
+            return False
     return True
 
 
@@ -110,11 +122,16 @@ def _is_rejected(cve: dict, description: str) -> bool:
     return status in {"rejected", "withdrawn"} or description_head.startswith("** reject **")
 
 
-def _walk_cpe_matches(nodes):
-    for node in nodes or []:
-        for match in node.get("cpeMatch", []):
-            yield match
-        yield from _walk_cpe_matches(node.get("children", []))
+def _walk_cpe_matches(configurations):
+    for config in configurations or []:
+        for node in config.get("nodes", []):
+            yield from _walk_node(node)
+
+def _walk_node(node):
+    for match in node.get("cpeMatch", []):
+        yield match
+    for child in node.get("children", []):
+        yield from _walk_node(child)
 
 
 def _split_cpe(criteria: str) -> dict:
