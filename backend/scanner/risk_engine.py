@@ -13,14 +13,15 @@ def calculate_host_risk(host: Host) -> Host:
         
         for cve in port.cves:
             sev = cve.severity.upper()
+            confidence_multiplier = 1.0 if getattr(cve, "confidence", "") == "confirmed" else 0.35
             if sev == "CRITICAL":
-                score += 10
+                score += 10 * confidence_multiplier
             elif sev == "HIGH":
-                score += 7
+                score += 7 * confidence_multiplier
             elif sev == "MEDIUM":
-                score += 4
+                score += 4 * confidence_multiplier
             elif sev in ["LOW", "UNKNOWN"]:
-                score += 1
+                score += 1 * confidence_multiplier
                 
     # Normalize to 0-100 scale (cap at 100)
     score = min(score, 100.0)

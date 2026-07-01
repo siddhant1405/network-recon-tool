@@ -8,6 +8,13 @@ class Vulnerability:
     description: str
     cvss: float = 0.0
     summary: str = ""
+    status: str = "Analyzed"
+    confidence: str = "speculative"
+    match_basis: str = "Keyword match only"
+    affected_versions: str = "Unknown"
+    detected_version: str = ""
+    group_key: str = ""
+    noise_reason: str = ""
 
 @dataclass
 class ServiceFingerprint:

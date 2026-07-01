@@ -1,10 +1,24 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import axios from 'axios';
 import { Activity, ShieldAlert, Server, ActivitySquare } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, Cell,
-  PieChart, Pie
+  PieChart, Pie, LineChart, Line, CartesianGrid
 } from 'recharts';
+
+const severityRank = {
+  CRITICAL: 4,
+  HIGH: 3,
+  MEDIUM: 2,
+  LOW: 1,
+  UNKNOWN: 0
+};
+
+const confidenceRank = {
+  confirmed: 2,
+  speculative: 1,
+  unknown: 0
+};
 
 function App() {
   const [target, setTarget] = useState('');
@@ -12,6 +26,10 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [severityFilter, setSeverityFilter] = useState('all');
+  const [confidenceFilter, setConfidenceFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('risk');
+  const [scanHistory, setScanHistory] = useState([]);
 
   const hosts = useMemo(() => {
     if (!data) return [];
@@ -20,6 +38,280 @@ function App() {
 
   const aiExplanation = data && !Array.isArray(data) ? data.ai_explanation : null;
   const completedScanMode = data && !Array.isArray(data) ? data.scan_mode : scanMode;
+  const scanSummary = data && !Array.isArray(data) ? data.summary : null;
+  const likelyNoise = scanSummary?.likely_noise || [];
+  const notableFindings = scanSummary?.notable_findings || [];
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('network-recon-history') || '[]');
+      setScanHistory(Array.isArray(stored) ? stored : []);
+    } catch (error) {
+      console.error('Unable to read scan history', error);
+    }
+  }, []);
+
+  const matchesCveFilters = useCallback((cve) => {
+    const severity = (cve.severity || 'UNKNOWN').toUpperCase();
+    const confidence = (cve.confidence || 'unknown').toLowerCase();
+    return (severityFilter === 'all' || severity === severityFilter)
+      && (confidenceFilter === 'all' || confidence === confidenceFilter);
+  }, [severityFilter, confidenceFilter]);
+
+  const sortCves = useCallback((cves) => {
+    return [...cves].sort((a, b) => {
+      if (sortBy === 'severity') {
+        return (severityRank[(b.severity || 'UNKNOWN').toUpperCase()] || 0)
+          - (severityRank[(a.severity || 'UNKNOWN').toUpperCase()] || 0);
+      }
+      if (sortBy === 'confidence') {
+        return (confidenceRank[(b.confidence || 'unknown').toLowerCase()] || 0)
+          - (confidenceRank[(a.confidence || 'unknown').toLowerCase()] || 0);
+      }
+      return a.id.localeCompare(b.id);
+    });
+  }, [sortBy]);
+
+  const filteredHosts = useMemo(() => {
+    const hasCveFilter = severityFilter !== 'all' || confidenceFilter !== 'all';
+    const mappedHosts = hosts.map(host => ({
+      ...host,
+      ports: [...host.ports]
+        .sort((a, b) => sortBy === 'port' ? a.port - b.port : 0)
+        .map(port => ({
+          ...port,
+          cves: sortCves((port.cves || []).filter(matchesCveFilters))
+        }))
+        .filter(port => !hasCveFilter || port.cves.length > 0)
+    })).filter(host => host.ports.length > 0 || !hasCveFilter);
+
+    return mappedHosts.sort((a, b) => {
+      if (sortBy === 'ip') return a.ip.localeCompare(b.ip);
+      if (sortBy === 'port') return (a.ports[0]?.port || 0) - (b.ports[0]?.port || 0);
+      return (b.risk_score || 0) - (a.risk_score || 0);
+    });
+  }, [hosts, severityFilter, confidenceFilter, sortBy, matchesCveFilters, sortCves]);
+
+  const visibleCveCount = useMemo(() => {
+    return filteredHosts.reduce((total, host) => (
+      total + host.ports.reduce((portTotal, port) => portTotal + (port.cves || []).length, 0)
+    ), 0);
+  }, [filteredHosts]);
+
+  const csvEscape = (value) => {
+    const text = String(value ?? '');
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+
+  const handleExportCsv = () => {
+    const rows = [
+      [
+        'Host',
+        'Port',
+        'Protocol',
+        'Service',
+        'Product',
+        'Detected Version',
+        'CVE',
+        'Severity',
+        'CVSS',
+        'Confidence',
+        'Match Basis',
+        'Affected Versions',
+        'Noise Note',
+        'Summary'
+      ]
+    ];
+
+    filteredHosts.forEach(host => {
+      host.ports.forEach(port => {
+        if (port.cves?.length) {
+          port.cves.forEach(cve => {
+            rows.push([
+              host.ip,
+              port.port,
+              port.protocol,
+              port.service,
+              port.product,
+              cve.detected_version || port.version,
+              cve.id,
+              cve.severity,
+              cve.cvss,
+              cve.confidence,
+              cve.match_basis,
+              cve.affected_versions,
+              cve.noise_reason,
+              cve.summary
+            ]);
+          });
+        } else {
+          rows.push([
+            host.ip,
+            port.port,
+            port.protocol,
+            port.service,
+            port.product,
+            port.version,
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            port.summary
+          ]);
+        }
+      });
+    });
+
+    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `network-recon-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = () => {
+    const reportWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!reportWindow) return;
+
+    const rows = filteredHosts.map(host => {
+      const portRows = host.ports.map(port => {
+        const cveList = (port.cves || []).map(cve => `- ${cve.id} (${cve.severity || 'UNKNOWN'} / ${cve.confidence || 'unknown'})`).join('<br/>');
+        return `<li><strong>Port ${port.port}/${port.protocol.toUpperCase()}</strong> — ${port.product || port.service} ${port.version || ''}<br/>${cveList || 'No CVEs matched'}</li>`;
+      }).join('');
+      return `<section><h3>${host.ip}</h3><ul>${portRows}</ul></section>`;
+    }).join('');
+
+    reportWindow.document.write(`<!doctype html><html><head><title>Network Recon Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1,h2,h3{color:#0f172a}ul{padding-left:18px}li{margin-bottom:8px}</style></head><body><h1>Network Recon Report</h1><p>Generated ${new Date().toLocaleString()}</p>${rows}</body></html>`);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
+  };
+
+  const handleShareReport = async () => {
+    const summaryText = [
+      `Network Recon Report`,
+      `Generated: ${new Date().toLocaleString()}`,
+      `Scan mode: ${completedScanMode || scanMode}`,
+      `Hosts: ${filteredHosts.length}`,
+      `Visible CVE matches: ${visibleCveCount}`,
+      ...filteredHosts.flatMap(host => [
+        `${host.ip} (${host.risk_label}, score ${host.risk_score})`,
+        ...host.ports.map(port => `${port.port}/${port.protocol.toUpperCase()} ${port.product || port.service} ${port.version || ''} (${(port.cves || []).length} findings)`)
+      ])
+    ].join('\n');
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Network Recon Report',
+          text: summaryText,
+        });
+        return;
+      } catch (error) {
+        console.error('Share cancelled', error);
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      window.alert('Report summary copied to clipboard.');
+    } catch (error) {
+      window.alert('Sharing is not available in this browser.');
+    }
+  };
+
+  const getServiceConfidenceNote = (port) => {
+    if (completedScanMode === 'fast') {
+      return 'Fast mode confirms the port is reachable, but it does not verify service version or CVE applicability.';
+    }
+    if (port.version) {
+      return `Deep mode detected version ${port.version}. CVE confidence is based on whether that version matches NVD affected-version data.`;
+    }
+    return 'Deep mode did not detect a service version, so CVE matching is intentionally limited to reduce false positives.';
+  };
+
+  const getGroupedCves = (cves) => {
+    const groups = new Map();
+    cves.forEach(cve => {
+      const key = cve.group_key || cve.id;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(cve);
+    });
+    return [...groups.values()];
+  };
+
+  const trendData = useMemo(() => {
+    const grouped = new Map();
+    scanHistory.forEach(entry => {
+      const hostsForEntry = Array.isArray(entry.hosts) ? entry.hosts : [];
+      hostsForEntry.forEach(host => {
+        const key = host.ip || 'unknown';
+        if (!grouped.has(key)) {
+          grouped.set(key, []);
+        }
+        grouped.get(key).push({
+          timestamp: entry.timestamp,
+          risk: host.risk_score || 0,
+          vulns: (host.ports || []).reduce((count, port) => count + (port.cves || []).length, 0),
+          scanMode: entry.scan_mode,
+        });
+      });
+    });
+
+    return Array.from(grouped.entries()).map(([ip, points]) => ({
+      ip,
+      points: points.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    }));
+  }, [scanHistory]);
+
+  const renderCveItem = (cve) => (
+    <div key={cve.id} className={`cve-item ${(cve.severity || 'unknown').toLowerCase()}`}>
+      <div className="cve-id">
+        <span>{cve.id}</span>
+        <span className={`confidence-badge confidence-${(cve.confidence || 'unknown').toLowerCase()}`}>
+          {cve.confidence || 'unknown'}
+        </span>
+      </div>
+      <div className="cve-body">
+        <div className="cve-meta-grid">
+          <span><strong>Detected:</strong> {cve.detected_version || 'Unknown'}</span>
+          <span><strong>Affected:</strong> {cve.affected_versions || 'Unknown'}</span>
+          <span><strong>Basis:</strong> {cve.match_basis || 'Keyword match'}</span>
+        </div>
+        <div className="cve-desc">{cve.description}</div>
+        {cve.noise_reason && (
+          <div className="noise-note">{cve.noise_reason}</div>
+        )}
+        {cve.summary && (
+          <div className="finding-summary cve-summary">
+            <strong>What this means:</strong> {cve.summary}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderCveGroup = (group) => {
+    if (group.length === 1) return renderCveItem(group[0]);
+    const primary = group[0];
+    return (
+      <details key={primary.group_key || primary.id} className={`cve-group ${(primary.severity || 'unknown').toLowerCase()}`}>
+        <summary>
+          <span>{group.length} related {primary.severity?.toLowerCase() || 'unknown'} findings</span>
+          <span>{group.map(cve => cve.id).join(', ')}</span>
+        </summary>
+        <div className="group-body">
+          {group.map(renderCveItem)}
+        </div>
+      </details>
+    );
+  };
 
   const handleScan = async (e) => {
     e.preventDefault();
@@ -32,6 +324,23 @@ function App() {
     try {
       const response = await axios.post('http://127.0.0.1:8000/api/scan', { target, scan_mode: scanMode });
       setData(response.data);
+
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        timestamp: new Date().toISOString(),
+        scan_mode: scanMode,
+        target,
+        hosts: Array.isArray(response.data.hosts) ? response.data.hosts : [],
+      };
+
+      try {
+        const stored = JSON.parse(localStorage.getItem('network-recon-history') || '[]');
+        const updated = [entry, ...(Array.isArray(stored) ? stored : [])].slice(0, 8);
+        localStorage.setItem('network-recon-history', JSON.stringify(updated));
+        setScanHistory(updated);
+      } catch (historyError) {
+        console.error('Unable to save scan history', historyError);
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'An error occurred during scanning.');
     } finally {
@@ -163,6 +472,8 @@ function App() {
         </div>
       )}
 
+
+
       {!data && !isLoading && !error && (
         <div className="hero-section">
           <h2>Advanced Threat Discovery & Vulnerability Assessment</h2>
@@ -223,6 +534,26 @@ function App() {
                 ? 'The scan found public CVE matches, but no critical findings. A CVE match is not proof that your device is actively vulnerable or compromised.'
                 : 'No known CVE matches were found in this scan. Keep software updated as normal.')}
             </p>
+            {likelyNoise.length > 0 && (
+              <div className="noise-panel">
+                <strong>Likely noise to review:</strong>
+                <ul>
+                  {likelyNoise.map((item, index) => (
+                    <li key={index}>{item.id}: {item.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {notableFindings.length > 0 && (
+              <div className="notable-findings">
+                <strong>Notable findings:</strong>
+                <ul>
+                  {notableFindings.slice(0, 3).map((item, index) => (
+                    <li key={index}>{item.id} on {item.service} — {item.detail || 'Review this finding for applicability.'}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {aiExplanation?.recommended_actions?.length > 0 && (
               <div className="risk-actions">
                 {aiExplanation.recommended_actions.map((action, index) => (
@@ -306,9 +637,91 @@ function App() {
             </div>
           </div>
 
+          <div className="charts-grid">
+            <div className="chart-card">
+              <h3>Recent Risk Trend</h3>
+              {trendData.length > 0 ? (
+                <div className="trend-list">
+                  {trendData.map((series) => (
+                    <div key={series.ip} className="trend-item">
+                      <div className="trend-title">{series.ip}</div>
+                      <ResponsiveContainer width="100%" height={120}>
+                        <LineChart data={series.points}>
+                          <CartesianGrid stroke="rgba(0,255,0,0.12)" vertical={false} />
+                          <XAxis dataKey="timestamp" tick={false} />
+                          <YAxis domain={[0, 100]} stroke="var(--text-secondary)" />
+                          <RechartsTooltip contentStyle={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', borderRadius: '0.5rem' }} />
+                          <Line type="monotone" dataKey="risk" stroke="var(--accent-color)" strokeWidth={2} dot={{ r: 3 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-trend">Scan the same host more than once to build a trend view.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="report-card report-card-prominent">
+            <div className="report-card-header">
+              <span className="report-card-icon">📄</span>
+              <div className="report-card-title">Generate / Share Report</div>
+            </div>
+            <div className="report-tools">
+              <button type="button" className="export-button" onClick={handleExportCsv}>
+                ⬇ Export CSV
+              </button>
+              <button type="button" className="export-button" onClick={handleExportPdf}>
+                🖨 Export PDF
+              </button>
+              <button type="button" className="export-button" onClick={handleShareReport}>
+                🔗 Share Report
+              </button>
+            </div>
+            <div className="report-hint">Export or share the current scan report. CSV includes all host, port, and CVE data. PDF opens a printable summary. Share copies a text summary to your clipboard.</div>
+          </div>
+
           <div className="assets-list">
-            <h2 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Asset Inventory</h2>
-            {hosts.map((host, i) => (
+            <div className="inventory-toolbar">
+              <div>
+                <h2>Asset Inventory</h2>
+                <span>{filteredHosts.length} host(s), {visibleCveCount} visible CVE match(es)</span>
+              </div>
+              <div className="inventory-controls">
+                <label>
+                  Severity
+                  <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+                    <option value="all">All</option>
+                    <option value="CRITICAL">Critical</option>
+                    <option value="HIGH">High</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="LOW">Low</option>
+                    <option value="UNKNOWN">Unknown</option>
+                  </select>
+                </label>
+                <label>
+                  Confidence
+                  <select value={confidenceFilter} onChange={(event) => setConfidenceFilter(event.target.value)}>
+                    <option value="all">All</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="speculative">Speculative</option>
+                    <option value="unknown">Unknown</option>
+                  </select>
+                </label>
+                <label>
+                  Sort
+                  <select value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+                    <option value="risk">Risk</option>
+                    <option value="ip">Host IP</option>
+                    <option value="port">Port</option>
+                    <option value="severity">Severity</option>
+                    <option value="confidence">Confidence</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            {filteredHosts.map((host, i) => (
               <div key={i} className="host-card">
                 <div className="host-header">
                   <div className="host-info">
@@ -335,6 +748,10 @@ function App() {
                           </div>
                         )}
 
+                        <div className="service-confidence-note">
+                          <strong>Confidence note:</strong> {getServiceConfidenceNote(port)}
+                        </div>
+
                         {port.fingerprint && (Object.keys(port.fingerprint.raw_headers || {}).length > 0 || port.fingerprint.ssl_issuer) && (
                           <div className="fingerprint-data">
                             {port.fingerprint.http_server && <div><strong>Server:</strong> {port.fingerprint.http_server}</div>}
@@ -347,19 +764,7 @@ function App() {
 
                         {port.cves && port.cves.length > 0 && (
                           <div className="cves-list">
-                            {port.cves.map((cve, k) => (
-                              <div key={k} className={`cve-item ${cve.severity.toLowerCase()}`}>
-                                <div className="cve-id">{cve.id}</div>
-                                <div className="cve-body">
-                                  <div className="cve-desc">{cve.description}</div>
-                                  {cve.summary && (
-                                    <div className="finding-summary cve-summary">
-                                      <strong>What this means:</strong> {cve.summary}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
+                            {getGroupedCves(port.cves).map(renderCveGroup)}
                           </div>
                         )}
                       </div>

@@ -1,5 +1,6 @@
 import nmap
 import concurrent.futures
+import re
 from typing import List
 from .models import Host, Port
 from .vuln_lookup import get_cves
@@ -56,6 +57,9 @@ def summarize_port(port_num: int, service_name: str, product: str = "", version:
 def summarize_cve(cve, service_name: str, product: str = "", version: str = "") -> str:
     service_label = (product or service_name or "this service").strip()
     severity = (cve.severity or "unknown").upper()
+    confidence = (getattr(cve, "confidence", "") or "speculative").lower()
+    description_words = re.sub(r"\s+", " ", cve.description or "").strip().split(" ")
+    description_detail = " ".join(description_words[:18]).rstrip(" .,;")
 
     if severity == "CRITICAL":
         priority = "Treat this as a priority review item."
@@ -69,9 +73,15 @@ def summarize_cve(cve, service_name: str, product: str = "", version: str = "") 
         priority = "Confirm the affected product and version before deciding how serious it is."
 
     version_copy = f" {version}" if version else ""
+    confidence_copy = "confirmed against the detected version" if confidence == "confirmed" else "a lower-confidence product match"
+    detail_copy = f" NVD describes it as: {description_detail}." if description_detail else ""
+    affected_copy = f" Affected range: {cve.affected_versions}." if cve.affected_versions else ""
+    detected_copy = f" Detected version: {cve.detected_version or version or 'unknown'}."
+    noise_copy = f" {cve.noise_reason}" if cve.noise_reason else ""
+
     return (
-        f"{cve.id} is a {severity.lower()} public vulnerability match for {service_label}{version_copy}. "
-        f"{priority} A match is not proof this host is exploitable; it means the detected service metadata resembles known vulnerable software."
+        f"{cve.id} is a {severity.lower()} CVE for {service_label}{version_copy} and is {confidence_copy}. "
+        f"{priority}{detected_copy}{affected_copy}{detail_copy}{noise_copy}"
     )
 
 

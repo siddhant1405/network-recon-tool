@@ -12,6 +12,7 @@ A Dockerized network reconnaissance dashboard for authorized security testing. I
 - Risk scoring by host
 - Charts for severity distribution and host risk
 - File upload for target lists
+- Report generation and sharing (CSV export, printable PDF, clipboard share)
 
 ## Scan Modes
 
@@ -135,8 +136,10 @@ network-recon-tool/
 │   │   ├── ai_summary.py
 │   │   ├── fingerprint.py
 │   │   ├── models.py
+│   │   ├── report.py
 │   │   ├── risk_engine.py
 │   │   ├── scanner.py
+│   │   ├── utils.py
 │   │   └── vuln_lookup.py
 │   └── Dockerfile
 ├── frontend/
